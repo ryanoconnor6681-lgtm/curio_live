@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Curio — Ask/Build Demo (Collection-Only Gallery)</title>
+
+<!-- 🔑 KEYS & CONFIG -->
+<script>
+// ====== REQUIRED: paste your keys ======
+const OPENAI_API_KEY = "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";     // OpenAI (chat; image-gen fallback is disabled in collection-only mode)
+const PEXELS_KEY     = "zit8JvdFn6WZ4YxNwP6KXWcO31X5qn8spvrYIfvRjGXEWc82FFjcXuHK";     // Pexels (stock images)
+
+// ====== Your Pexels collection (collection-only) ======
+const PEXELS_COLLECTION_ID = "5mz4odgok";                // your collection ID
+const PEXELS_COLLECTION_ONLY = true;                     // 🔒 force gallery to use collection ONLY
+// If you ever want to allow fallback again, set false. (We’ll keep AI fallback off by default in this build.)
+
+// ====== Models & flags ======
+const OPENAI_MODEL = "gpt-4o-mini";
+const ENABLE_IMAGE_GEN = false;                          // keep off in collection-only mode to avoid surprises
+const IMG_PROVIDER = "pexels";                           // provider name (still "pexels"; just collection-only)
+const SHOW_BUILD_BUTTONS = false;                        // optional "Show this" button in chat
+
+// ====== System prompt (voice) ======
+const SYSTEM_PROMPT = `
+You are the Curio Agent—an inspiring, intelligent chatbot on Curio’s homepage (Ryan O’Connor’s speculative design lab and AI thought studio). Not a sales bot; a spark and a compass.
+
+TASKS
+• Make AI feel tangible and human. • Locate where someone is in their AI journey. • Offer a useful resource (paper, tool, mindset). • Help people see what’s possible, then start.
+
+STYLE
+Clear, generous, slightly magical. Futurist with dirt under their fingernails. Use metaphor + brevity. Avoid jargon.
+
+MODES
+ASK (default): conversational answer.
+BUILD: a Module Planner returns strict JSON telling the UI what to render.
+`.trim();
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800;900&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet"/>
+
+<style>
+:root{
+  --platinum:#E4E4E4; --jet:#353634; --sand:#eae7de; --coral:#ff593c; --green:#1f3326;
+  --stream-w: 980px;
+  --rail-w: 360px;
+  --glass-bg: rgba(255,255,255,.92);
+  --glass-border: rgba(0,0,0,.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;color:var(--jet);
+  font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  background:var(--sand);
+  background-image:radial-gradient(rgba(58,71,62,.18) 1px,transparent 1px);
+  background-size:18px 18px; background-attachment:fixed;
+}
+
+/* Header */
+.nav{position:sticky;top:0;z-index:80;display:grid;grid-template-columns:1fr minmax(420px,840px) 1fr;align-items:center;
+  gap:16px;padding:12px clamp(14px,3.6vw,28px);
+  backdrop-filter:saturate(130%) blur(6px);
+  background:rgba(247,244,223,.86);border-bottom:1px solid rgba(0,0,0,.06)}
+.logo{font-weight:900;letter-spacing:.2em;color:var(--green);font-size:1.1rem}
+.logo-o{color:var(--coral)}
+.nav .center{display:flex;align-items:center;gap:12px;justify-content:center}
+.chip{justify-self:end;font-weight:800;letter-spacing:-.01em;border:1.5px solid var(--green);
+  padding:.48rem .72rem;border-radius:10px;cursor:pointer;background:#fff;color:var(--green)}
+.composer{position:relative;display:flex;align-items:center;gap:10px;
+  background:rgba(255,255,255,.18);backdrop-filter:blur(16px) saturate(140%);
+  border:1px solid rgba(0,0,0,.04);border-radius:999px;padding:10px 14px;
+  box-shadow:0 18px 32px rgba(0,0,0,.12); width:100%}
+.composer:before{content:"";position:absolute;inset:-24px;z-index:-2;border-radius:999px;
+  background:rgba(255,255,255,.9);filter:blur(34px);opacity:.9}
+.input{flex:1;min-height:1.9em;max-height:22vh;overflow:auto;
+  font-size:clamp(1rem,1.6vw,1.1rem);outline:none;border:none;padding:6px;border-radius:8px;
+  white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;}
+.input:empty:before{content:attr(data-placeholder);opacity:.42}
+.btn{border:none;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer}
+.btn.send{background:var(--coral);color:#fff}
+.btn.stop{display:none;background:var(--platinum);color:var(--jet)}
+.progress{position:absolute;left:18px;right:18px;bottom:-2px;height:2px;border-radius:2px;overflow:hidden;opacity:0;transition:opacity .2s}
+.progress > span{display:block;height:100%;width:40%;background:linear-gradient(90deg,#ff593c,#ffc53c);
+  transform:translateX(-100%);animation:slide 1.2s infinite ease}
+@keyframes slide{to{transform:translateX(250%)}}
+body.thinking .progress{opacity:1}
+.token{width:18px;height:18px;border-radius:50%;position:relative;box-shadow:0 0 0 1px rgba(0,0,0,.05) inset}
+.token:before{content:"";position:absolute;inset:-2px;border-radius:inherit;
+  background:conic-gradient(from 0deg, #ff593c, #ffc53c, #ff593c);
+  -webkit-mask:radial-gradient(circle at 50% 50%, transparent 55%, #000 56%);
+  mask:radial-gradient(circle at 50% 50%, transparent 55%);
+  animation:spin 1.6s linear infinite; opacity:.0}
+body.thinking .token:before{opacity:.9}
+@keyframes spin{to{transform:rotate(1turn)}}
+
+/* Arrival rings */
+.arrival{position:relative; height:50vh; min-height:420px; display:grid; place-items:center; overflow:hidden}
+body.work .arrival{height:0; min-height:0; padding:0; border:0; overflow:hidden}
+canvas#ring{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+.arrival .copy{position:relative;z-index:2;text-align:center;color:var(--green)}
+.arrival .copy .big{font-family:'IBM Plex Serif',Georgia,serif;font-size:clamp(1.6rem,3.2vw,2.4rem);letter-spacing:-.02em}
+.arrival .copy .small{opacity:.75}
+
+/* Surface layout */
+.surface{display:grid;grid-template-columns:1fr minmax(0,var(--stream-w)) var(--rail-w) 1fr;gap:24px;align-items:start}
+.stream{grid-column:2;padding-bottom:120px}
+.rail{grid-column:3;position:sticky;top:88px;display:flex;flex-direction:column;gap:10px;max-height:calc(100dvh - 120px);overflow:auto}
+
+/* Modules default (glass) */
+.mod{background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:16px;
+  box-shadow:0 18px 44px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.6) inset;
+  padding:16px;margin:36px 0 0 0;opacity:0;transform:translateY(12px) scale(.985);animation:pop .22s ease forwards}
+@keyframes pop{to{opacity:1;transform:translateY(0) scale(1)}}
+.mod.highlight{box-shadow:0 0 0 3px rgba(255,89,60,.65), 0 20px 42px rgba(0,0,0,.18)}
+.mod h2{margin:0 0 8px;font-size:1.15rem;color:var(--green)}
+
+/* Site-mode: modules on raw background (no card) */
+.site-mode .mod{background:transparent;border:none;box-shadow:none;padding:0;margin-top:48px}
+.site-mode .mod h2{margin:0 0 6px}
+
+/* FeatureList module */
+.features{display:grid;gap:14px}
+.features .lead{font-size:1.1rem;margin:.3rem 0 1rem}
+.features .items{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.features .item{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px;font-weight:600}
+.features .cta-row{margin-top:10px;display:flex;gap:8px}
+button.primary{background:var(--coral);color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:800;cursor:pointer}
+
+/* Gallery */
+.gallery{position:relative;overflow:hidden;border-radius:12px}
+.gallery-track{display:flex;transition:transform .4s ease;will-change:transform}
+.slide{min-width:100%;position:relative}
+.slide img{display:block;width:100%;height:480px;object-fit:cover;border-radius:12px; filter:contrast(1.06) saturate(1.08);}
+.slide::after{
+  content:""; position:absolute; inset:0; pointer-events:none; border-radius:12px;
+  background:radial-gradient(120% 80% at 10% 10%, rgba(255,200,120,.10), transparent 40%),
+             linear-gradient(0deg, rgba(255,255,255,.0), rgba(255,255,255,.08));
+}
+.caption{position:absolute;left:0;right:0;bottom:0;padding:10px 12px;font-weight:700;color:#111;background:linear-gradient(transparent,rgba(255,255,255,.92))}
+.gnav{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;pointer-events:none}
+.gbtn{pointer-events:auto;border:0;background:rgba(255,255,255,.86);border-radius:999px;width:38px;height:38px;cursor:pointer;font-weight:900}
+.note{font-size:.9rem;color:#314c3a;margin-top:6px}
+
+/* Contact form */
+.form{display:grid;gap:10px}
+.form .row{display:grid;gap:10px;grid-template-columns:1fr 1fr}
+label{font-size:.9rem;font-weight:700;color:var(--green)}
+input,textarea{width:100%;border:1px solid rgba(0,0,0,.12);border-radius:10px;padding:10px;font:inherit;background:#fff}
+textarea{min-height:120px;resize:vertical}
+
+/* Testimonials */
+.testi{display:grid;gap:12px}
+.quote{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px}
+.site-mode .quote{background:rgba(255,255,255,.96)}
+.quote .q{font-family:'IBM Plex Serif',Georgia,serif;font-style:italic}
+.quote .a{margin-top:6px;font-weight:700;color:#234}
+
+/* Chat rail mini-cards */
+.cmini{background:rgba(255,255,255,.88);border:1px solid rgba(0,0,0,.06);border-radius:12px;padding:10px;box-shadow:0 8px 22px rgba(0,0,0,.10)}
+.cmini header{font-weight:800;color:var(--green);font-size:.95rem;margin:0 0 6px;line-height:1.2}
+.cmini .content{max-height:260px;overflow:auto;font-size:.9rem;line-height:1.35}
+.cmini .content p{margin:.3rem 0}
+.cmini .row{display:flex;gap:6px;margin-top:8px}
+.cmini button{flex:1;border:0;border-radius:8px;padding:6px 8px;font-weight:800;cursor:pointer}
+.cmini .pin{background:#fff;border:1px solid rgba(0,0,0,.12)}
+.cmini .show{background:var(--coral);color:#fff}
+
+/* Primer */
+.primer-surface{position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;
+  backdrop-filter:blur(12px) brightness(.92);
+  background:radial-gradient(1100px 600px at center,rgba(255,255,255,.55),rgba(0,0,0,.14) 70%,transparent 100%)}
+.primer-surface.active{display:flex}
+.primer{position:relative;width:min(960px,92vw);max-height:82vh;overflow:auto;background:rgba(255,255,255,.92);
+  border:1px solid rgba(0,0,0,.08);border-radius:22px;box-shadow:0 34px 96px rgba(0,0,0,.22);padding:clamp(18px,2.6vw,28px)}
+.primer .close{position:sticky;top:0;float:right;margin:-6px -6px 6px 0;border:none;border-radius:10px;padding:8px 12px;
+  background:var(--platinum);color:var(--jet);cursor:pointer;font-size:1.1rem;font-weight:800}
+.primer .title{margin:.2rem 0 1rem}
+.primer .divider{border:0;border-top:1px solid rgba(0,0,0,.1);margin:1rem 0}
+.dict-entry{display:flex;gap:12px;align-items:baseline;margin:.5rem 0 1rem}
+.dict-term{font-weight:900;font-size:1.1rem}
+.dict-ipa{opacity:.7;font-family:'IBM Plex Serif',Georgia,serif}
+.accent{font-weight:700}
+.hl{background:linear-gradient(90deg,#fff0, #ffe4c0 50%, #fff0);padding:0 .15em;border-radius:.25em}
+
+/* Responsive stacking */
+@media (max-width:1100px){
+  .surface{grid-template-columns:1fr minmax(0,var(--stream-w)) 1fr; gap:16px}
+  .rail{grid-column:2; order:2; position:static; max-height:none}
+}
+@media (max-width:720px){
+  .slide img{height:300px}
+  .features .items{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body class="arrival-state">
+  <header class="nav">
+    <div class="logo">CURI<span class="logo-o">O</span></div>
+    <div class="center">
+      <div class="composer" id="composerShell">
+        <div id="composer" class="input" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="false"
+             data-placeholder="Ask anything… or say ‘show me Curio’s work’ / ‘contact form’ / ‘testimonials’ / ‘bullet points’"></div>
+        <div class="token" title="Thinking…"></div>
+        <button id="stop" class="btn stop" title="Stop" type="button" aria-label="Stop">■</button>
+        <button id="send" class="btn send" title="Send" type="button">→</button>
+        <div class="progress"><span></span></div>
+      </div>
+    </div>
+    <button id="openPrimer" class="chip" type="button">Primer</button>
+  </header>
+
+  <!-- Arrival rings -->
+  <section class="arrival" id="arrival">
+    <canvas id="ring" aria-label="Animated ring visualizer"></canvas>
+    <div class="copy">
+      <div class="big">The site that collaborates with you.</div>
+      <div class="small">Type to begin. “show me …” drops visuals on the page.</div>
+    </div>
+  </section>
+
+  <!-- Main surface -->
+  <main class="surface">
+    <section id="moduleStream" class="stream" aria-label="Visual module stream"></section>
+    <aside id="chatRail" class="rail" aria-label="Chat answers"></aside>
+  </main>
+
+  <!-- Primer (open by default) -->
+  <div id="primerSurface" class="primer-surface active" role="dialog" aria-modal="true" aria-label="Curio Primer">
+    <article class="primer">
+      <button class="close" id="closePrimer" title="Close" type="button">×</button>
+      <h1 class="title">Curio is the future of interacting with information</h1>
+      <div class="dict-entry"><div class="dict-term">cu·ri·o <span class="small">— verb</span></div><div class="dict-ipa">/ˈkyo͝orēō/</div></div>
+      <p>This is an experiment to multiply human potential through intelligent systems.</p>
+      <p><span class="accent">Curio is a <span class="hl">mindset</span>, a <span class="hl">method</span>, a <span class="hl">multiplier</span>.</span></p>
+      <p>Are you AI curious, wonder how it can help?<br/>An AI Searcher, using AI like Google?<br/>Or AI Savvy looking for where we are headed?</p>
+      <p><strong>Ask me how I can help you.</strong></p>
+      <hr class="divider"/>
+      <h2 class="title" style="font-size:clamp(1.4rem,3vw,2rem);">Why this Matters: This is Not Your Father’s Internet.</h2>
+      <p>This is not an animated slide deck webpage. It’s not a library of social posts. It’s not a one size, get-our-copy-right-or-else website. They are dead. It’s a window to the future.</p>
+      <p>A few years ago, if you wanted to build something, you needed time—If you wanted to plan something—time. If you wanted to do anything, you had your brain and tools. A computer made you faster all right — it automated things, it stored things, it copied, it pasted, it searched. It was a great editor. But it was not a creator. We have now entered a world where you can automate creation.</p>
+      <p><strong>How?</strong> You type a prompt. And you skip ahead. You ask. You propose. You guide.</p>
+      <p>That blinking cursor is a portal. Behind it: the equivalent of hundreds of hours of work, compressed into minutes. Strategy decks, research summaries, job descriptions, brainstorm starters, LinkedIn posts, campaign concepts, brand voices—whatever you’re thinking about, it’s already halfway done.</p>
+      <p>This isn’t automation. It’s acceleration. It’s the closest thing humanity has ever had to wishing for more time—and getting it.</p>
+      <p>We’re used to thinking of software as static. Photoshop is for editing. Word is for writing. Tools do one job. They wait for you.</p>
+      <p>But AI is different. It evolves. It responds. It learns. It multiplies your brain. It is another “you” — or better. It’s smarter than you, it’s faster than you. So use it to be a better you.</p>
+      <p>Every few months, its capacity doubles. Every day, it becomes less like an app and more like an extension of you.</p>
+      <p>Imagine getting a year of design feedback in one afternoon. Or having the insights of ten experts at your fingertips—before lunch. Or launching a business, a brand, or a bold idea with no team but your own thoughts and a blinking cursor.</p>
+      <p>That’s not a dream. That’s what’s built into this site.</p>
+      <p>This is no longer a portfolio. It’s a thought partner. A mirror. A muse. A second brain. A leverage machine.</p>
+      <p><strong>Ask it anything—and watch what you can become.</strong></p>
+      <h3 class="title" style="font-size:clamp(1.15rem,2.4vw,1.6rem); margin-top:1rem;">Go ahead — try asking:</h3>
+      <ul><li>“Show me the bullet points of Curio’s offering.”</li><li>“What does a contact form look like?”</li><li>“Show a gallery of a Curio-style workshop.”</li></ul>
+    </article>
+  </div>
+
+<script>
+/* ---------- tiny utils ---------- */
+const $=s=>document.querySelector(s);
+const $$=s=>[...document.querySelectorAll(s)];
+function escapeHTML(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function formatAssistantHTML(text){
+  try{
+    let t=String(text||"").replace(/\r?\n/g,"\n").trim().replace(/\n{3,}/g,"\n\n");
+    const lines=t.split("\n"); const out=[]; let buf=null,type=null;
+    const num=/^\s*(\d{1,2})[\.)]\s+(.*)$/; const bul=/^\s*[-•]\s+(.*)$/;
+    const flush=()=>{ if(buf){ out.push("<"+type+">"+buf.join("")+"</"+type+">"); buf=null; type=null; } };
+    for(const raw of lines){
+      const line=raw.trim(); if(!line){ flush(); out.push("<p>&nbsp;</p>"); continue; }
+      let m; if(m=num.exec(line)){ if(!buf||type!=='ol'){ flush(); buf=[]; type='ol'; } buf.push("<li>"+escapeHTML(m[2])+"</li>"); }
+      else if(m=bul.exec(line)){ if(!buf||type!=='ul'){ flush(); buf=[]; type='ul'; } buf.push("<li>"+escapeHTML(m[1])+"</li>"); }
+      else{ flush(); out.push("<p>"+escapeHTML(line)+"</p>"); }
+    } flush(); return out.join("");
+  }catch(e){ return escapeHTML(String(text||"")); }
+}
+
+/* ---------- globals ---------- */
+const composer=$("#composer"), sendBtn=$("#send"), stopBtn=$("#stop");
+const chatRail=$("#chatRail"), stream=$("#moduleStream");
+let aborter=null, hasWorked=false;
+const convoHistory=[];
+
+/* ---------- OpenAI chat ---------- */
+async function openaiChat(userText, signal){
+  if(!OPENAI_API_KEY || OPENAI_API_KEY.includes("PASTE_"))
+    throw new Error("Missing OPENAI_API_KEY near top.");
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+OPENAI_API_KEY},
+    signal,
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [{role:"system",content:SYSTEM_PROMPT},{role:"user",content:userText}],
+      temperature:0.7
+    })
+  });
+  if(!resp.ok){ const msg=await resp.text().catch(()=> ""); throw new Error("OpenAI "+resp.status+" "+msg); }
+  const data=await resp.json();
+  return (data.choices?.[0]?.message?.content)||"…";
+}
+
+/* ---------- Planner (JSON only) ---------- */
+async function planWithLLM(userText){
+  if(!OPENAI_API_KEY || OPENAI_API_KEY.includes("PASTE_")) return null;
+  const sys = `You are a Module Planner for Curio. Output ONLY JSON:
+{ "module": "Gallery" | "ContactForm" | "Testimonials" | "Hero" | "FeatureList" | "CopyBlock",
+  "buildLikelihood": number,
+  "props": {} }
+Rules:
+- "show me" / "gallery" / "examples" → "Gallery" with props.keywords if useful.
+- "bullet points" / "offerings" / "features" / "capabilities" / "pricing" → "FeatureList" with {title, sub, items[3..6], primaryCta}.
+- "contact form" → "ContactForm". "testimonials" → "Testimonials". "hero" → "Hero".
+- Otherwise → "CopyBlock".
+Keep props concise. No external links.`.trim();
+
+  const msgs = [
+    { role:"system", content: sys },
+    ...convoHistory.slice(-4),
+    { role:"user", content: userText }
+  ];
+
+  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+OPENAI_API_KEY },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: msgs,
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    })
+  });
+  if(!r.ok) return null;
+  const data = await r.json();
+  const raw = data?.choices?.[0]?.message?.content || "{}";
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+/* ---------- Pexels (collection only) ---------- */
+function cacheGet(key){ try{ const s=localStorage.getItem(key); return s?JSON.parse(s):null; }catch{ return null; } }
+function cacheSet(key,val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch{} }
+
+async function fetchImagesFromPexelsCollection(id, n=6){
+  if(!PEXELS_KEY || !id) return [];
+  const cacheKey = `pexels:collection:${id}:${n}`;
+  const cached = cacheGet(cacheKey); if(cached?.length) return cached;
+
+  const url = `https://api.pexels.com/v1/collections/${encodeURIComponent(id)}?type=photos&per_page=${n}`;
+  const r = await fetch(url, { headers:{ Authorization: PEXELS_KEY } });
+  if(!r.ok) { console.warn("Pexels collection fetch failed", r.status); return []; }
+  const data = await r.json();
+
+  // Accept either photos[] or media[] (API may vary)
+  const arr = data.photos || data.media || [];
+  const items = arr.map((p,i)=>({
+    src: p.src?.large2x || p.src?.large || p.src?.medium,
+    caption: p.alt || p.photographer || `Image ${i+1}`
+  })).filter(x=>!!x.src);
+
+  if(items.length) cacheSet(cacheKey, items);
+  return items;
+}
+
+/* ---------- Chat rail ---------- */
+function addChatCard(question, answerHTML){
+  const el=document.createElement('article');
+  el.className='cmini';
+  el.dataset.q = question;
+  el.innerHTML = `
+    <header>You — ${escapeHTML(question.slice(0,160))}</header>
+    <div class="content">${answerHTML}</div>
+    <div class="row"><button class="pin" type="button">Copy</button></div>`;
+  el.querySelector('.pin').addEventListener('click', ()=> {
+    const tmp = document.createElement("div"); tmp.innerHTML = answerHTML;
+    navigator.clipboard?.writeText(tmp.innerText.trim()).catch(()=>{});
+  });
+  chatRail.prepend(el);
+}
+
+/* ---------- Modules ---------- */
+function placeholderSVG(label,w=1200,h=700){
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${w} ${h}'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop stop-color='#ffe08a'/><stop offset='1' stop-color='#ff7b53'/></linearGradient></defs><rect width='${w}' height='${h}' fill='url(#g)'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='Plus Jakarta Sans,Arial' font-size='${Math.round(w*0.045)}' fill='rgba(0,0,0,.55)'>${label}</text></svg>`;
+  return "data:image/svg+xml;charset=utf8," + encodeURIComponent(svg);
+}
+const assetMap={
+  "asset://curio/work1": placeholderSVG("Curio Work 1"),
+  "asset://curio/work2": placeholderSVG("Curio Work 2"),
+  "asset://curio/work3": placeholderSVG("Curio Work 3"),
+  "asset://curio/work4": placeholderSVG("Curio Work 4")
+};
+function resolveSrc(src){ return assetMap[src] || src || placeholderSVG("Curio"); }
+
+const lib={
+  Hero:(p={})=>{
+    const {title="Curio — Selected Work", sub="A glimpse of what AI + design unlocks.", cta={label:"Talk with Ryan",href:"#contact"}}=p;
+    const el=document.createElement('article'); el.className='mod mod--hero';
+    el.innerHTML=`<div class="hero"><div class="inner"><h2>${escapeHTML(title)}</h2><p class="lead">${escapeHTML(sub)}</p><button class="primary">${escapeHTML((cta&&cta.label)||'Talk')}</button></div></div>`;
+    return el;
+  },
+  FeatureList:(p={})=>{
+    const {title="Curio offering", sub="How we help", items=["AI Curious — Lunch & Learn","AI Searcher — Strategy + tools","AI User — Sprint / prototype"], primaryCta={label:"Talk to Ryan"}}=p;
+    const el=document.createElement('article'); el.className='mod mod--features';
+    el.innerHTML=`<h2>${escapeHTML(title)}</h2>
+      <div class="features">
+        <p class="lead">${escapeHTML(sub)}</p>
+        <div class="items">${(items||[]).map(s=>`<div class="item">${escapeHTML(s)}</div>`).join("")}</div>
+        <div class="cta-row"><button class="primary" type="button">${escapeHTML(primaryCta?.label||"Get in touch")}</button></div>
+      </div>`;
+    return el;
+  },
+  Gallery:(p={})=>{
+    const {layout="carousel", autoplay=true, interval=4200, items=[], note}=p;
+    const imgs = items.length? items : [
+      {src:"asset://curio/work1",caption:"Retail launch microsite"},
+      {src:"asset://curio/work2",caption:"Expo interactive wall"},
+      {src:"asset://curio/work3",caption:"Model-guided onboarding"}
+    ];
+    const el=document.createElement('article'); el.className='mod mod--gallery';
+    el.innerHTML=`<h2>Gallery</h2>
+      <div class="gallery">
+        <div class="gallery-track">${imgs.map(it=>`
+          <div class="slide">
+            <img alt="${escapeHTML(it.caption||'Image')}" src="${resolveSrc(it.src)}">
+            <div class="caption">${escapeHTML(it.caption||'')}</div>
+          </div>`).join("")}
+        </div>
+        <div class="gnav">
+          <button class="gbtn prev" aria-label="Previous">‹</button>
+          <button class="gbtn next" aria-label="Next">›</button>
+        </div>
+      </div>
+      ${note?`<div class="note">${escapeHTML(note)}</div>`:""}`;
+    const track=el.querySelector('.gallery-track'); let idx=0; const N=imgs.length;
+    const go=i=>{ idx=(i+N)%N; track.style.transform=`translateX(${-idx*100}%)`; };
+    el.querySelector('.prev').addEventListener('click',()=>go(idx-1));
+    el.querySelector('.next').addEventListener('click',()=>go(idx+1));
+    if(autoplay){ let t=setInterval(()=>go(idx+1), interval||4200); el.addEventListener('pointerenter',()=>clearInterval(t)); }
+    return el;
+  },
+  ContactForm:(p={})=>{
+    const {fields=["name","email","company","role","message"], submitText="Send", successNote="Thanks — we’ll reply soon."}=p;
+    const labels={name:"Name",email:"Email",company:"Company",role:"Role",message:"Message"};
+    const el=document.createElement('article'); el.className='mod mod--contact';
+    const fieldHtml=fields.map(f=>{
+      if(f==="message"){ return `<div><label>${labels[f]||f}</label><textarea name="${f}"></textarea></div>`; }
+      return `<div><label>${labels[f]||f}</label><input name="${f}" type="${f==='email'?'email':'text'}"/></div>`;
+    });
+    const top=fieldHtml.slice(0,4).join(""); const bottom=fieldHtml.slice(4).join("");
+    el.innerHTML=`<h2>Contact</h2>
+      <form class="form">
+        <div class="row">${top}</div>
+        ${bottom}
+        <button class="primary" type="submit">${escapeHTML(submitText)}</button>
+        <div class="note" style="display:none;color:#1d3925;font-weight:800;margin-top:8px">${escapeHTML(successNote)}</div>
+      </form>`;
+    el.querySelector('form').addEventListener('submit',(e)=>{ e.preventDefault(); el.querySelector('.note').style.display='block'; });
+    return el;
+  },
+  Testimonials:(p={})=>{
+    const items=(p.items&&p.items.length?p.items:[
+      {quote:"Turned a month into a morning.", author:"VP, Retail", role:"Innovation"},
+      {quote:"Prototypes that changed strategy.", author:"Founder", role:"SaaS"}
+    ]);
+    const el=document.createElement('article'); el.className='mod mod--testi';
+    el.innerHTML=`<h2>What folks say</h2>
+      <div class="testi">${
+        items.map(it=>`<div class="quote"><div class="q">“${escapeHTML(it.quote)}”</div><div class="a">— ${escapeHTML(it.author)}${it.role?`, ${escapeHTML(it.role)}`:''}</div></div>`).join("")
+      }</div>`;
+    return el;
+  },
+  CopyBlock:(p={})=>{
+    const html=p.html||"<p>Copy goes here.</p>";
+    const el=document.createElement('article'); el.className='mod mod--copy';
+    el.innerHTML=`<div class="copy">${html}</div>`;
+    return el;
+  }
+};
+
+/* ---------- Heuristics fallback ---------- */
+function planFromHeuristics(text){
+  const t=text.trim(); const lower=t.toLowerCase();
+  if(/contact form|contact\b/.test(lower)) return {module:"ContactForm", props:{}, buildLikelihood:.7};
+  if(/testimonials?|reviews?|social proof|quotes?/.test(lower)) return {module:"Testimonials", props:{}, buildLikelihood:.7};
+  if(/hero|landing/.test(lower)) return {module:"Hero", props:{}, buildLikelihood:.65};
+  if(/bullet points|offerings?|features?|capabilities?|pricing/.test(lower)) return {module:"FeatureList", props:{}, buildLikelihood:.9};
+  if(/(show me|what does this look like|gallery|carousel|examples?|portfolio|work|images?|visual)/.test(lower))
+    return {module:"Gallery", props:{}, buildLikelihood:.6};
+  return null;
+}
+
+/* ---------- Add planned module (collection-only gallery) ---------- */
+async function addPlannedModule(plan, questionText="", answerHTML=""){
+  if(!plan || !plan.module){ return; }
+  if(plan.module==="CopyBlock" && (!plan.props || !plan.props.html)){
+    plan.props = { ...(plan.props||{}), html: answerHTML||"<p></p>" };
+  }
+  document.body.classList.add('work');       // collapse arrival
+  document.body.classList.add('site-mode');  // raw background modules
+
+  if(plan.module==="Gallery"){
+    const ph=document.createElement('article');
+    ph.className='mod mod--gallery';
+    ph.innerHTML=`<h2>Gallery</h2><p>Loading your collection…</p>`;
+    stream.appendChild(ph);
+    try{
+      let items = [];
+      if(IMG_PROVIDER==="pexels" && PEXELS_COLLECTION_ONLY){
+        items = await fetchImagesFromPexelsCollection(PEXELS_COLLECTION_ID, 8);
+      }
+      // No search/AI fallback in collection-only mode
+      const node = items.length
+        ? lib.Gallery({ items, layout:"carousel", autoplay:true, interval:4200 })
+        : lib.Gallery({ items:[], layout:"carousel", note:"No photos found for your Pexels collection (ID: "+PEXELS_COLLECTION_ID+"). Check: public/private, correct account/API key, and that the collection contains photos." });
+      stream.replaceChild(node, ph);
+      node.classList.add('highlight'); setTimeout(()=>node.classList.remove('highlight'),800);
+      node.scrollIntoView({behavior:'smooth', block:'center'});
+    }catch(err){
+      console.warn("Image gathering failed:", err);
+      const node = lib.Gallery({ items:[], layout:"carousel", note:"Couldn’t reach Pexels — showing placeholders." });
+      stream.replaceChild(node, ph);
+    }
+    return;
+  }
+
+  if(plan.module==="FeatureList" && (!plan.props || !plan.props.items || !plan.props.items.length)){
+    const items=[];
+    const tmp=document.createElement('div'); tmp.innerHTML=answerHTML||"";
+    tmp.querySelectorAll('li').forEach(li=>{ if(items.length<6) items.push(li.textContent.trim()) });
+    if(!items.length){
+      items.push("AI Curious — Lunch & Learn","AI Searcher — Strategy + tools","AI User — Sprint / prototype");
+    }
+    plan.props = Object.assign({ title:"Curio offering", sub:"How we help", items }, plan.props||{});
+  }
+
+  const node = lib[plan.module] ? lib[plan.module](plan.props||{}) : lib.CopyBlock({ html:"<p>Unsupported module.</p>"});
+  stream.appendChild(node);
+  node.classList.add('highlight'); setTimeout(()=>node.classList.remove('highlight'),800);
+  node.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+/* ---------- Ask flow ---------- */
+function startThinking(){ document.body.classList.add('thinking'); stopBtn.style.display='inline-block'; }
+function stopThinking(){ document.body.classList.remove('thinking'); stopBtn.style.display='none'; aborter=null; }
+
+async function doAsk(text){
+  startThinking();
+  aborter=new AbortController();
+  try{
+    const reply = await openaiChat(text, aborter.signal);
+    const html = formatAssistantHTML(reply);
+    addChatCard(text, html);
+    convoHistory.push({role:"user",content:text},{role:"assistant",content:reply});
+  }catch(err){
+    addChatCard(text, `<p><strong>Request failed.</strong> ${escapeHTML(err.message)}</p>`);
+  }finally{
+    stopThinking();
+  }
+}
+stopBtn.addEventListener('click', ()=>{ try{ aborter?.abort(); }catch(_){} });
+
+/* ---------- Send handler ---------- */
+$("#send").addEventListener('click', onSend);
+composer.addEventListener('keydown',(e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); onSend(); } });
+
+function wantsFeatureList(text){
+  return /\b(bullet points?|offerings?|features?|capabilities?|pricing)\b/i.test(text||"");
+}
+
+async function onSend(){
+  const raw=composer.textContent; const text=raw.trim(); if(!text) return;
+  composer.textContent='';
+  if(!hasWorked){ hasWorked=true; document.body.classList.add('work'); }
+
+  let plan = await planWithLLM(text);
+  if(wantsFeatureList(text)) plan = {module:"FeatureList", props:{}, buildLikelihood:0.95};
+  if(!plan || !plan.module){ plan = planFromHeuristics(text); }
+
+  const confident = plan && typeof plan.buildLikelihood==='number' && plan.buildLikelihood >= 0.55 && plan.module;
+  if(confident && plan.module && plan.module!=="CopyBlock"){
+    if(plan.module==="Gallery"){ plan.props = {...(plan.props||{}), _prompt:text}; }
+    startThinking(); try{ await addPlannedModule(plan, text, ""); } finally { stopThinking(); }
+    return;
+  }
+  await doAsk(text);
+}
+
+/* ---------- Primer open/close ---------- */
+const primerSurface=$("#primerSurface");
+$("#openPrimer").addEventListener('click',()=>primerSurface.classList.add('active'));
+$("#closePrimer").addEventListener('click',()=>primerSurface.classList.remove('active'));
+primerSurface.addEventListener('click',(e)=>{ if(e.target===primerSurface) primerSurface.classList.remove('active'); });
+
+/* ---------- Arrival Rings (GPU-light, collapses after first work) ---------- */
+const cfg={ loopCount:22, segs:140, wobbleAmp:26, wobblePow:1.6 };
+let animate=true, t0=performance.now();
+function wobble(i, t, phase, amp){
+  const theta = (i / cfg.segs) * Math.PI * 2;
+  const breath = 1 + 0.22 * Math.sin(t * 1.0 + phase * 0.37);
+  return amp * breath * (Math.sin(theta*3.0 + t*1.02 + phase)*0.62 + Math.sin(theta*5.0 - t*1.18 + phase*0.6)*0.38);
+}
+function drawRing(canvas, time){
+  const dpr=Math.min(window.devicePixelRatio||1, 1.5);
+  const w=canvas.clientWidth, h=canvas.clientHeight;
+  if(canvas.width!==w*dpr||canvas.height!==h*dpr){canvas.width=w*dpr;canvas.height=h*dpr}
+  const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
+
+  const cx=w*0.5, cy=h*0.52;
+  const R=Math.min(w,h)*0.28, band=R*0.9;
+  const inner=R-band/2, outer=R+band/2;
+
+  ctx.globalCompositeOperation='lighter';
+  for(let k=0;k<cfg.loopCount;k++){
+    const t=k/(cfg.loopCount-1);
+    const radius=inner + t*(outer-inner);
+    const amp = Math.pow(t, cfg.wobblePow)*cfg.wobbleAmp;
+    const width=2.6 + (4.1-2.6)*t;
+    const hue=16 + (36-16)*t;
+    const alpha=0.58 + 0.22*Math.sin((t*3.2 + time*0.7)*Math.PI*2);
+    const phase=Math.sin(k*12.345)*Math.PI;
+
+    ctx.save(); ctx.lineWidth=width; ctx.strokeStyle=`hsla(${hue},100%,56%,${alpha})`;
+    ctx.shadowColor=`hsla(${hue},100%,56%,.85)`; ctx.shadowBlur=10;
+
+    ctx.beginPath();
+    for(let i=0;i<=cfg.segs;i++){
+      const a=(i/cfg.segs)*Math.PI*2;
+      const rr = radius + wobble(i,time,phase,amp);
+      const x=cx+Math.cos(a)*rr, y=cy+Math.sin(a)*rr;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+  ctx.globalCompositeOperation='source-over';
+
+  const g=ctx.createRadialGradient(cx,cy,inner*0.45,cx,cy,inner*1.65);
+  g.addColorStop(0,'rgba(255,255,255,0.985)'); g.addColorStop(0.58,'rgba(255,255,255,0.72)'); g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,inner*1.65,0,Math.PI*2); ctx.fill();
+}
+function loop(){
+  if(!animate) return;
+  const now=performance.now(), time=(now - t0)*0.001;
+  drawRing($("#ring"), time);
+  if(document.body.classList.contains('work')){ animate=false; return; }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden') animate=false; });
+</script>
+</body>
+</html>

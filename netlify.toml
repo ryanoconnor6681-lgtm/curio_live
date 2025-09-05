@@ -1,0 +1,8 @@
+[build]
+  publish = "curio_2"
+  functions = "curio_2/netlify/functions"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
